@@ -1,0 +1,87 @@
+pipeline {
+    agent any
+
+    environment {
+        BUILD_DIR = "path_to_build_directory"
+        ENVIRONMENT = "dev" // Default environment
+    }
+
+    parameters {
+        choice(name: 'ENVIRONMENT', choices: ['dev', 'qa', 'stage', 'prod'], description: 'Choose the target environment')
+    }
+
+    stages {
+        stage('Load Environment Config') {
+            steps {
+                script {
+                    // Load environment-specific properties from a file
+                    def properties = readProperties(file: 'environment.properties')
+
+                    // Set environment-specific variables
+                    DEPLOY_SERVER = properties["${ENVIRONMENT}.server_ip"]
+                    SERVER_USER = properties["${ENVIRONMENT}.server_user"]
+                    SERVER_PASSWORD = properties["${ENVIRONMENT}.server_password"]
+                    IIS_SITE_NAME = properties["${ENVIRONMENT}.iis_site_name"]
+                    APP_POOL_NAME = properties["${ENVIRONMENT}.app_pool_name"]
+                    APP_PATH = properties["${ENVIRONMENT}.app_path"]
+                }
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                // Check out the source code from the repository
+                git url: 'https://your-git-repo-url', branch: 'main'
+            }
+        }
+
+        stage('Build') {
+            steps {
+                script {
+                    // Build the .NET application using the Linux SDK
+                    sh 'dotnet build YourSolution.sln --configuration Release'
+                }
+            }
+        }
+
+        stage('Package') {
+            steps {
+                script {
+                    // Publish the application for deployment
+                    sh 'dotnet publish YourSolution.sln --configuration Release --output ${BUILD_DIR}'
+                }
+            }
+        }
+
+        stage('Transfer Files to Windows Server') {
+            steps {
+                script {
+                    // Transfer the files to the Windows server using SCP or SSH
+                    sh """
+                    sshpass -p '${SERVER_PASSWORD}' scp -r ${BUILD_DIR}/* ${SERVER_USER}@${DEPLOY_SERVER}:${APP_PATH}
+                    """
+                }
+            }
+        }
+
+        stage('Deploy to IIS') {
+            steps {
+                script {
+                    // Remotely restart IIS or the app pool using SSH to the Windows server
+                    sh """
+                    sshpass -p '${SERVER_PASSWORD}' ssh ${SERVER_USER}@${DEPLOY_SERVER} 'powershell -Command "Restart-WebAppPool -Name \'${APP_POOL_NAME}\'"'
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Deployment succeeded!'
+        }
+        failure {
+            echo 'Deployment failed.'
+        }
+    }
+}
